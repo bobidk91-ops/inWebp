@@ -155,24 +155,39 @@ export default function App() {
         fileName = `avito_${originalName}.webp`;
     }
 
-    // Mobile Share/Save Logic
-    // Fix: Strict check for function existence to satisfy TypeScript
+    // 1. Mobile Share/Save Logic (Primary for Telegram WebApp)
     if (typeof navigator.share === 'function') {
       try {
         const blob = await fetch(file.processedUrl).then(r => r.blob());
         const fileToShare = new File([blob], fileName, { type: 'image/webp' });
         
+        // Check if device supports sharing this file type
+        if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [fileToShare] })) {
+             const msg = "Ваше устройство не поддерживает сохранение этого формата через меню 'Поделиться'.";
+             if (tg && tg.showAlert) tg.showAlert(msg);
+             else alert(msg);
+             return;
+        }
+
         await navigator.share({
           files: [fileToShare],
-          title: fileName,
         });
-        return;
-      } catch (e) {
-        console.log("Sharing failed or cancelled, falling back to link download", e);
+        return; // Success, exit function
+      } catch (e: any) {
+        // Ignore "AbortError" which happens when user closes the share sheet manually
+        if (e.name === 'AbortError' || e.message?.toLowerCase().includes('cancel')) {
+            return;
+        }
+        
+        console.error("Share failed", e);
+        const errorMsg = "Ошибка сохранения: " + (e.message || "Неизвестная ошибка");
+        if (tg && tg.showAlert) tg.showAlert(errorMsg);
+        else alert(errorMsg);
+        return; // Don't try fallback if sharing explicitly failed on a supported device
       }
     }
 
-    // Fallback for Desktop / non-supporting browsers
+    // 2. Desktop Fallback (Classic Download Link)
     const link = document.createElement('a');
     link.href = file.processedUrl;
     link.download = fileName;
