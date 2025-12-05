@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, X, Download, Image as ImageIcon, CheckCircle, RefreshCw, Settings, FolderUp, Sparkles, Zap, Share2 } from 'lucide-react';
+import { Upload, X, Download, Image as ImageIcon, CheckCircle, RefreshCw, Settings, FolderUp, Sparkles, Zap, Share2, Layers } from 'lucide-react';
 import { AppFile, ProcessingOptions, AiData } from './types';
 import { processImage, slugify, formatSize } from './services/imageService';
 import { generateGeminiDescription } from './services/geminiService';
@@ -13,10 +13,12 @@ export default function App() {
   const [cropTo43, setCropTo43] = useState(true);
   const [autoAi, setAutoAi] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isBulkSharing, setIsBulkSharing] = useState(false);
   
   // AI & Preview State
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [canShare, setCanShare] = useState(false);
 
   useEffect(() => {
     if (tg) {
@@ -29,6 +31,8 @@ export default function App() {
         console.log("Closing confirmation not supported");
       }
     }
+    // Check if share is supported on mount
+    setCanShare(typeof navigator.share === 'function');
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,28 +146,29 @@ export default function App() {
     }
   };
 
-  const downloadFile = async (file: AppFile) => {
-    if (!file.processedUrl) return;
-    
-    let fileName;
+  const getFileName = (file: AppFile) => {
     if (file.aiData && file.aiData.alt_text) {
         const slug = slugify(file.aiData.alt_text);
         const truncatedSlug = slug.length > 100 ? slug.substring(0, 100) : slug;
-        fileName = `${truncatedSlug}.webp`;
+        return `${truncatedSlug}.webp`;
     } else {
         const originalName = file.file.name.substring(0, file.file.name.lastIndexOf('.')) || file.file.name;
-        fileName = `avito_${originalName}.webp`;
+        return `avito_${originalName}.webp`;
     }
+  };
 
-    // 1. Mobile Share/Save Logic (Primary for Telegram WebApp)
-    if (typeof navigator.share === 'function') {
-      try {
+  // Logic for Native Sharing (Mobile)
+  const handleShare = async (file: AppFile) => {
+    if (!file.processedUrl) return;
+    const fileName = getFileName(file);
+
+    try {
         const blob = await fetch(file.processedUrl).then(r => r.blob());
         const fileToShare = new File([blob], fileName, { type: 'image/webp' });
         
-        // Check if device supports sharing this file type
+        // Strict check if device supports sharing this file type
         if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [fileToShare] })) {
-             const msg = "Ваше устройство не поддерживает сохранение этого формата через меню 'Поделиться'.";
+             const msg = "Device does not support sharing this file.";
              if (tg && tg.showAlert) tg.showAlert(msg);
              else alert(msg);
              return;
@@ -172,22 +177,70 @@ export default function App() {
         await navigator.share({
           files: [fileToShare],
         });
-        return; // Success, exit function
-      } catch (e: any) {
-        // Ignore "AbortError" which happens when user closes the share sheet manually
+    } catch (e: any) {
         if (e.name === 'AbortError' || e.message?.toLowerCase().includes('cancel')) {
             return;
         }
-        
         console.error("Share failed", e);
-        const errorMsg = "Ошибка сохранения: " + (e.message || "Неизвестная ошибка");
+        const errorMsg = "Share error: " + (e.message || "Unknown error");
         if (tg && tg.showAlert) tg.showAlert(errorMsg);
         else alert(errorMsg);
-        return; // Don't try fallback if sharing explicitly failed on a supported device
-      }
     }
+  };
 
-    // 2. Desktop Fallback (Classic Download Link)
+  // Logic for Bulk Download / Share
+  const handleDownloadAll = async () => {
+    const processedFiles = files.filter(f => f.status === 'done' && f.processedUrl);
+    if (processedFiles.length === 0) return;
+
+    setIsBulkSharing(true);
+
+    try {
+        // Strategy 1: Mobile Share (Share multiple files at once)
+        if (canShare) {
+            try {
+                const filesToShare = await Promise.all(processedFiles.map(async (f) => {
+                    const blob = await fetch(f.processedUrl!).then(r => r.blob());
+                    const name = getFileName(f);
+                    return new File([blob], name, { type: 'image/webp' });
+                }));
+
+                // Check if the browser can share this array of files
+                if (typeof navigator.canShare === 'function' && navigator.canShare({ files: filesToShare })) {
+                    await navigator.share({ files: filesToShare });
+                    setIsBulkSharing(false);
+                    return; // Exit if share was initiated
+                }
+            } catch (e: any) {
+                 if (e.name !== 'AbortError') {
+                    console.log("Bulk share failed, falling back to sequential download", e);
+                 } else {
+                     setIsBulkSharing(false);
+                     return; // User cancelled
+                 }
+            }
+        }
+
+        // Strategy 2: Fallback to Sequential Download (Desktop/Unsupported Mobile)
+        // We add a small delay to prevent browser blocking multiple popups
+        for (let i = 0; i < processedFiles.length; i++) {
+            setTimeout(() => {
+                handleDownload(processedFiles[i]);
+            }, i * 800);
+        }
+
+    } catch (e) {
+        console.error(e);
+    } finally {
+        setTimeout(() => setIsBulkSharing(false), 1000);
+    }
+  };
+
+  // Logic for HTML5 Download (Desktop)
+  const handleDownload = (file: AppFile) => {
+    if (!file.processedUrl) return;
+    const fileName = getFileName(file);
+    
     const link = document.createElement('a');
     link.href = file.processedUrl;
     link.download = fileName;
@@ -202,6 +255,7 @@ export default function App() {
   };
 
   const activeFile = files.find(f => f.id === previewFileId);
+  const doneCount = files.filter(f => f.status === 'done').length;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 font-sans p-4 pb-20 select-none">
@@ -212,9 +266,11 @@ export default function App() {
             isOpen={!!activeFile}
             onClose={() => setPreviewFileId(null)}
             onGenerateAi={handleGenerateAi}
-            onDownload={() => downloadFile(activeFile)}
+            onDownload={() => handleDownload(activeFile)}
+            onShare={() => handleShare(activeFile)}
             isAiLoading={isAiLoading}
             onCopy={copyToClipboard}
+            canShare={canShare}
         />
       )}
 
@@ -316,20 +372,38 @@ export default function App() {
             </div>
         </div>
 
-        {/* Action Button */}
+        {/* Action Buttons */}
         {files.length > 0 && (
-             <button 
-              onClick={startProcessing}
-              disabled={isProcessing}
-              className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
-                isProcessing 
-                  ? 'bg-slate-300 cursor-not-allowed' 
-                  : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200 active:scale-95'
-              }`}
-            >
-              {isProcessing ? <RefreshCw className="animate-spin w-5 h-5"/> : <CheckCircle className="w-5 h-5"/>}
-              {isProcessing ? 'Processing...' : `Process (${files.length})`}
-            </button>
+            <div className="space-y-2">
+                <button 
+                onClick={startProcessing}
+                disabled={isProcessing}
+                className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
+                    isProcessing 
+                    ? 'bg-slate-300 cursor-not-allowed' 
+                    : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200 active:scale-95'
+                }`}
+                >
+                {isProcessing ? <RefreshCw className="animate-spin w-5 h-5"/> : <CheckCircle className="w-5 h-5"/>}
+                {isProcessing ? 'Processing...' : `Process (${files.length})`}
+                </button>
+
+                {/* Bulk Download/Share Button */}
+                {doneCount > 1 && !isProcessing && (
+                    <button 
+                        onClick={handleDownloadAll}
+                        disabled={isBulkSharing}
+                        className="w-full py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold shadow-sm active:scale-95 transition-transform flex items-center justify-center gap-2"
+                    >
+                        {isBulkSharing ? (
+                            <RefreshCw className="animate-spin w-5 h-5" />
+                        ) : (
+                            canShare ? <Share2 className="w-5 h-5" /> : <Layers className="w-5 h-5" />
+                        )}
+                        {canShare ? 'Share All Files' : 'Download All Files'}
+                    </button>
+                )}
+            </div>
         )}
 
         {/* List */}
@@ -379,12 +453,27 @@ export default function App() {
                         </button>
                         
                         {file.status === 'done' && (
-                            <button 
-                                onClick={() => downloadFile(file)}
-                                className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
-                            >
-                                {typeof navigator.share === 'function' ? <Share2 className="w-5 h-5" /> : <Download className="w-5 h-5" />}
-                            </button>
+                            <>
+                                {/* Share Button - Only if supported */}
+                                {canShare && (
+                                    <button 
+                                        onClick={() => handleShare(file)}
+                                        className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
+                                        title="Share"
+                                    >
+                                        <Share2 className="w-5 h-5" />
+                                    </button>
+                                )}
+                                
+                                {/* Download Button - Always visible as fallback */}
+                                <button 
+                                    onClick={() => handleDownload(file)}
+                                    className="p-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors"
+                                    title="Download"
+                                >
+                                    <Download className="w-5 h-5" />
+                                </button>
+                            </>
                         )}
                     </div>
 

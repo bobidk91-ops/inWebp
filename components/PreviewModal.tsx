@@ -1,6 +1,6 @@
 import React from 'react';
-import { X, Sparkles, Wand2, Loader2, Copy, Download, RefreshCw } from 'lucide-react';
-import { AppFile, AiData } from '../types';
+import { X, Sparkles, Wand2, Loader2, Copy, Download, RefreshCw, Share2 } from 'lucide-react';
+import { AppFile } from '../types';
 
 interface PreviewModalProps {
   file: AppFile;
@@ -8,8 +8,10 @@ interface PreviewModalProps {
   onClose: () => void;
   onGenerateAi: () => void;
   onDownload: () => void;
+  onShare: () => void;
   isAiLoading: boolean;
   onCopy: (text: string) => void;
+  canShare: boolean;
 }
 
 export const PreviewModal: React.FC<PreviewModalProps> = ({
@@ -18,8 +20,10 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({
   onClose,
   onGenerateAi,
   onDownload,
+  onShare,
   isAiLoading,
-  onCopy
+  onCopy,
+  canShare
 }) => {
   if (!isOpen) return null;
 
@@ -160,6 +164,17 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({
 
         {/* Footer Actions */}
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-3 sticky bottom-0 z-10">
+          {canShare && (
+            <button 
+                onClick={onShare}
+                disabled={!file.processedUrl}
+                className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl font-bold shadow-sm active:scale-95 transition-transform flex items-center justify-center gap-2"
+            >
+                <Share2 className="w-5 h-5" />
+                Share
+            </button>
+          )}
+          
           <button 
             onClick={onDownload}
             disabled={!file.processedUrl}
