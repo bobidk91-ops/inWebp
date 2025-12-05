@@ -1,0 +1,5 @@
+{
+  "name": "Avito AI Optimizer",
+  "description": "Telegram Mini App for optimizing images for Avito with AI-generated SEO descriptions and file renaming.",
+  "requestFramePermissions": []
+}
