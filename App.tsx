@@ -156,7 +156,8 @@ export default function App() {
     }
 
     // Mobile Share/Save Logic
-    if (navigator.share) {
+    // Fix: Strict check for function existence to satisfy TypeScript
+    if (typeof navigator.share === 'function') {
       try {
         const blob = await fetch(file.processedUrl).then(r => r.blob());
         const fileToShare = new File([blob], fileName, { type: 'image/webp' });
@@ -367,7 +368,7 @@ export default function App() {
                                 onClick={() => downloadFile(file)}
                                 className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
                             >
-                                {navigator.share ? <Share2 className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+                                {typeof navigator.share === 'function' ? <Share2 className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                             </button>
                         )}
                     </div>
