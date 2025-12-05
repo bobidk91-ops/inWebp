@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, X, Download, Image as ImageIcon, CheckCircle, RefreshCw, Settings, FolderUp, Sparkles, Zap } from 'lucide-react';
+import { Upload, X, Download, Image as ImageIcon, CheckCircle, RefreshCw, Settings, FolderUp, Sparkles, Zap, Share2 } from 'lucide-react';
 import { AppFile, ProcessingOptions, AiData } from './types';
 import { processImage, slugify, formatSize } from './services/imageService';
 import { generateGeminiDescription } from './services/geminiService';
@@ -11,7 +11,7 @@ export default function App() {
   const [files, setFiles] = useState<AppFile[]>([]);
   const [quality, setQuality] = useState(0.8);
   const [cropTo43, setCropTo43] = useState(true);
-  const [autoAi, setAutoAi] = useState(false); // New state for Auto AI
+  const [autoAi, setAutoAi] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   
   // AI & Preview State
@@ -23,9 +23,11 @@ export default function App() {
       tg.ready();
       tg.expand();
       document.body.style.backgroundColor = tg.themeParams.bg_color || '#f1f5f9';
-      
-      // Ensure the app knows it's the main scrollable element
-      tg.enableClosingConfirmation();
+      try {
+        tg.enableClosingConfirmation();
+      } catch (e) {
+        console.log("Closing confirmation not supported");
+      }
     }
   }, []);
 
@@ -72,17 +74,9 @@ export default function App() {
         cropTo43
     };
 
-    // Create a copy to work with
     const filesToProcess = [...files];
     
     for (let i = 0; i < filesToProcess.length; i++) {
-      // Skip if already done, unless we want to re-process? 
-      // For now, let's only process pending or error files, or if user forces it.
-      // But standard behavior is process all pending.
-      if (filesToProcess[i].status === 'done' && filesToProcess[i].aiData) continue;
-      // If done but no AI data and AutoAI is on, we might want to process AI?
-      // Let's keep it simple: Process pending images.
-
       if (filesToProcess[i].status === 'done' && !autoAi) continue;
       if (filesToProcess[i].status === 'done' && autoAi && filesToProcess[i].aiData) continue;
 
@@ -90,7 +84,7 @@ export default function App() {
         // 1. Image Processing
         if (filesToProcess[i].status !== 'done') {
             filesToProcess[i] = { ...filesToProcess[i], status: 'processing' };
-            setFiles([...filesToProcess]); // Update UI to show processing
+            setFiles([...filesToProcess]);
 
             const result = await processImage(filesToProcess[i].originalUrl, options);
             
@@ -109,14 +103,11 @@ export default function App() {
 
         // 2. Auto AI Generation
         if (autoAi && filesToProcess[i].processedUrl && !filesToProcess[i].aiData) {
-            // Update UI to show AI is working (maybe keep status processing or add a sub-status)
-            // For simplicity, we just wait.
             try {
                 const aiData = await generateGeminiDescription(filesToProcess[i].processedUrl!);
                 filesToProcess[i] = { ...filesToProcess[i], aiData };
             } catch (aiError) {
                 console.error(`AI Error for ${filesToProcess[i].file.name}:`, aiError);
-                // We don't fail the whole file if AI fails, just log it
             }
         }
 
@@ -151,11 +142,10 @@ export default function App() {
     }
   };
 
-  const downloadFile = (file: AppFile) => {
+  const downloadFile = async (file: AppFile) => {
     if (!file.processedUrl) return;
     
     let fileName;
-    
     if (file.aiData && file.aiData.alt_text) {
         const slug = slugify(file.aiData.alt_text);
         const truncatedSlug = slug.length > 100 ? slug.substring(0, 100) : slug;
@@ -165,6 +155,23 @@ export default function App() {
         fileName = `avito_${originalName}.webp`;
     }
 
+    // Mobile Share/Save Logic
+    if (navigator.share) {
+      try {
+        const blob = await fetch(file.processedUrl).then(r => r.blob());
+        const fileToShare = new File([blob], fileName, { type: 'image/webp' });
+        
+        await navigator.share({
+          files: [fileToShare],
+          title: fileName,
+        });
+        return;
+      } catch (e) {
+        console.log("Sharing failed or cancelled, falling back to link download", e);
+      }
+    }
+
+    // Fallback for Desktop / non-supporting browsers
     const link = document.createElement('a');
     link.href = file.processedUrl;
     link.download = fileName;
@@ -236,7 +243,7 @@ export default function App() {
                 <input 
                     type="file" 
                     multiple 
-                    // @ts-ignore - non-standard attributes for directory selection
+                    // @ts-ignore
                     webkitdirectory="" 
                     directory=""
                     onChange={handleChange}
@@ -252,7 +259,6 @@ export default function App() {
         {/* Settings Compact */}
         <div className="bg-white p-4 rounded-2xl shadow-sm space-y-4">
             
-            {/* Toggles */}
             <div className="flex flex-col gap-3">
                 <label className="flex items-center justify-between cursor-pointer">
                     <div className="flex items-center gap-2">
@@ -279,7 +285,6 @@ export default function App() {
 
             <div className="h-px bg-slate-100 my-2"></div>
 
-            {/* Quality Slider */}
             <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Image Quality</span>
@@ -362,7 +367,7 @@ export default function App() {
                                 onClick={() => downloadFile(file)}
                                 className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
                             >
-                                <Download className="w-5 h-5" />
+                                {navigator.share ? <Share2 className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                             </button>
                         )}
                     </div>

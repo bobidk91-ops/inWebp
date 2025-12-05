@@ -21,8 +21,13 @@ const RESPONSE_SCHEMA = {
 };
 
 export const generateGeminiDescription = async (imageUrl: string): Promise<AiData> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === 'undefined' || apiKey === '') {
+    throw new Error("An API Key must be set when running in a browser. Please check Railway Variables.");
+  }
+  
   // Use process.env.API_KEY directly when initializing the client
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
 
   try {
     // Fetch blob from local blob URL
