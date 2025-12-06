@@ -31,7 +31,7 @@ export default function App() {
         console.log("Closing confirmation not supported");
       }
     }
-    // Check if share is supported on mount
+    // Simple check: does the browser support the share API at all?
     setCanShare(typeof navigator.share === 'function');
   }, []);
 
@@ -146,32 +146,34 @@ export default function App() {
     }
   };
 
-  const getFileName = (file: AppFile) => {
+  const getFileName = (file: AppFile, extension: string = 'webp') => {
     if (file.aiData && file.aiData.alt_text) {
         const slug = slugify(file.aiData.alt_text);
         const truncatedSlug = slug.length > 100 ? slug.substring(0, 100) : slug;
-        return `${truncatedSlug}.webp`;
+        return `${truncatedSlug}.${extension}`;
     } else {
         const originalName = file.file.name.substring(0, file.file.name.lastIndexOf('.')) || file.file.name;
-        return `avito_${originalName}.webp`;
+        return `avito_${originalName}.${extension}`;
     }
   };
 
   // Logic for Native Sharing (Mobile)
   const handleShare = async (file: AppFile) => {
     if (!file.processedUrl) return;
-    const fileName = getFileName(file);
+    
+    // IMPORTANT: For better compatibility (especially iOS), we often need to share as JPEG
+    // even if the source is WebP.
+    const fileName = getFileName(file, 'jpg'); 
 
     try {
         const blob = await fetch(file.processedUrl).then(r => r.blob());
-        const fileToShare = new File([blob], fileName, { type: 'image/webp' });
         
-        // Strict check if device supports sharing this file type
-        if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [fileToShare] })) {
-             const msg = "Device does not support sharing this file.";
-             if (tg && tg.showAlert) tg.showAlert(msg);
-             else alert(msg);
-             return;
+        // Create a new file object with image/jpeg type for maximum compatibility
+        const fileToShare = new File([blob], fileName, { type: 'image/jpeg' });
+        
+        if (navigator.canShare && !navigator.canShare({ files: [fileToShare] })) {
+             // Just warn in console, but TRY anyway, because canShare is sometimes wrong
+             console.warn("navigator.canShare returned false, but trying anyway.");
         }
 
         await navigator.share({
@@ -201,19 +203,16 @@ export default function App() {
             try {
                 const filesToShare = await Promise.all(processedFiles.map(async (f) => {
                     const blob = await fetch(f.processedUrl!).then(r => r.blob());
-                    const name = getFileName(f);
-                    return new File([blob], name, { type: 'image/webp' });
+                    const name = getFileName(f, 'jpg'); // Force JPG for share compatibility
+                    return new File([blob], name, { type: 'image/jpeg' });
                 }));
 
-                // Check if the browser can share this array of files
-                if (typeof navigator.canShare === 'function' && navigator.canShare({ files: filesToShare })) {
-                    await navigator.share({ files: filesToShare });
-                    setIsBulkSharing(false);
-                    return; // Exit if share was initiated
-                }
+                await navigator.share({ files: filesToShare });
+                setIsBulkSharing(false);
+                return; // Exit if share was initiated
             } catch (e: any) {
                  if (e.name !== 'AbortError') {
-                    console.log("Bulk share failed, falling back to sequential download", e);
+                    console.log("Bulk share failed, trying fallback...", e);
                  } else {
                      setIsBulkSharing(false);
                      return; // User cancelled
@@ -221,11 +220,10 @@ export default function App() {
             }
         }
 
-        // Strategy 2: Fallback to Sequential Download (Desktop/Unsupported Mobile)
-        // We add a small delay to prevent browser blocking multiple popups
+        // Strategy 2: Fallback to Sequential Download (Desktop)
         for (let i = 0; i < processedFiles.length; i++) {
             setTimeout(() => {
-                handleDownload(processedFiles[i]);
+                downloadFileAnchor(processedFiles[i]);
             }, i * 800);
         }
 
@@ -236,17 +234,30 @@ export default function App() {
     }
   };
 
-  // Logic for HTML5 Download (Desktop)
-  const handleDownload = (file: AppFile) => {
-    if (!file.processedUrl) return;
-    const fileName = getFileName(file);
-    
-    const link = document.createElement('a');
-    link.href = file.processedUrl;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  // Helper for anchor download
+  const downloadFileAnchor = (file: AppFile) => {
+      if (!file.processedUrl) return;
+      const fileName = getFileName(file, 'webp'); // Keep WebP for desktop download
+      
+      const link = document.createElement('a');
+      link.href = file.processedUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  // Smart Handler that decides between Share (Mobile) and Download (Desktop)
+  const handleDownloadAction = (file: AppFile) => {
+      // If we are on mobile (detect via user agent or Telegram platform), we MUST use Share
+      // because <a download> is blocked in Telegram WebViews.
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      if (canShare && isMobile) {
+          handleShare(file);
+      } else {
+          downloadFileAnchor(file);
+      }
   };
 
   const copyToClipboard = (text: string) => {
@@ -266,7 +277,7 @@ export default function App() {
             isOpen={!!activeFile}
             onClose={() => setPreviewFileId(null)}
             onGenerateAi={handleGenerateAi}
-            onDownload={() => handleDownload(activeFile)}
+            onDownload={() => handleDownloadAction(activeFile)}
             onShare={() => handleShare(activeFile)}
             isAiLoading={isAiLoading}
             onCopy={copyToClipboard}
@@ -454,7 +465,7 @@ export default function App() {
                         
                         {file.status === 'done' && (
                             <>
-                                {/* Share Button - Only if supported */}
+                                {/* Share Button - Visible if supported */}
                                 {canShare && (
                                     <button 
                                         onClick={() => handleShare(file)}
@@ -465,9 +476,9 @@ export default function App() {
                                     </button>
                                 )}
                                 
-                                {/* Download Button - Always visible as fallback */}
+                                {/* Download Button - Actually triggers share on mobile */}
                                 <button 
-                                    onClick={() => handleDownload(file)}
+                                    onClick={() => handleDownloadAction(file)}
                                     className="p-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors"
                                     title="Download"
                                 >
