@@ -18,7 +18,6 @@ export default function App() {
   // AI & Preview State
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [canShare, setCanShare] = useState(false);
 
   useEffect(() => {
     if (tg) {
@@ -31,8 +30,6 @@ export default function App() {
         console.log("Closing confirmation not supported");
       }
     }
-    // Simple check: does the browser support the share API at all?
-    setCanShare(typeof navigator.share === 'function');
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -160,6 +157,14 @@ export default function App() {
   // Logic for Native Sharing (Mobile)
   const handleShare = async (file: AppFile) => {
     if (!file.processedUrl) return;
+
+    // Check availability at runtime, not render time
+    if (!navigator.share) {
+        const msg = "Native sharing is not supported on this device.";
+        if (tg && tg.showAlert) tg.showAlert(msg);
+        else alert(msg);
+        return;
+    }
     
     // IMPORTANT: For better compatibility (especially iOS), we often need to share as JPEG
     // even if the source is WebP.
@@ -171,10 +176,8 @@ export default function App() {
         // Create a new file object with image/jpeg type for maximum compatibility
         const fileToShare = new File([blob], fileName, { type: 'image/jpeg' });
         
-        if (navigator.canShare && !navigator.canShare({ files: [fileToShare] })) {
-             // Just warn in console, but TRY anyway, because canShare is sometimes wrong
-             console.warn("navigator.canShare returned false, but trying anyway.");
-        }
+        // Skip canShare check because it is often unreliable in WebViews
+        // We just try to share.
 
         await navigator.share({
           files: [fileToShare],
@@ -199,7 +202,7 @@ export default function App() {
 
     try {
         // Strategy 1: Mobile Share (Share multiple files at once)
-        if (canShare) {
+        if (navigator.share) {
             try {
                 const filesToShare = await Promise.all(processedFiles.map(async (f) => {
                     const blob = await fetch(f.processedUrl!).then(r => r.blob());
@@ -220,7 +223,7 @@ export default function App() {
             }
         }
 
-        // Strategy 2: Fallback to Sequential Download (Desktop)
+        // Strategy 2: Fallback to Sequential Download (Desktop or if Share failed)
         for (let i = 0; i < processedFiles.length; i++) {
             setTimeout(() => {
                 downloadFileAnchor(processedFiles[i]);
@@ -253,7 +256,7 @@ export default function App() {
       // because <a download> is blocked in Telegram WebViews.
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       
-      if (canShare && isMobile) {
+      if (isMobile) {
           handleShare(file);
       } else {
           downloadFileAnchor(file);
@@ -281,7 +284,7 @@ export default function App() {
             onShare={() => handleShare(activeFile)}
             isAiLoading={isAiLoading}
             onCopy={copyToClipboard}
-            canShare={canShare}
+            canShare={true} // Always show share in modal, handle error on click
         />
       )}
 
@@ -409,9 +412,9 @@ export default function App() {
                         {isBulkSharing ? (
                             <RefreshCw className="animate-spin w-5 h-5" />
                         ) : (
-                            canShare ? <Share2 className="w-5 h-5" /> : <Layers className="w-5 h-5" />
+                           <Layers className="w-5 h-5" />
                         )}
-                        {canShare ? 'Share All Files' : 'Download All Files'}
+                        Download All Files
                     </button>
                 )}
             </div>
@@ -465,18 +468,16 @@ export default function App() {
                         
                         {file.status === 'done' && (
                             <>
-                                {/* Share Button - Visible if supported */}
-                                {canShare && (
-                                    <button 
-                                        onClick={() => handleShare(file)}
-                                        className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
-                                        title="Share"
-                                    >
-                                        <Share2 className="w-5 h-5" />
-                                    </button>
-                                )}
+                                {/* Share Button - ALWAYS VISIBLE */}
+                                <button 
+                                    onClick={() => handleShare(file)}
+                                    className="p-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 transition-colors"
+                                    title="Share"
+                                >
+                                    <Share2 className="w-5 h-5" />
+                                </button>
                                 
-                                {/* Download Button - Actually triggers share on mobile */}
+                                {/* Download Button - Triggers Share on Mobile */}
                                 <button 
                                     onClick={() => handleDownloadAction(file)}
                                     className="p-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors"
