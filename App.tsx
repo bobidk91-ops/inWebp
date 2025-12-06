@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Upload, X, Download, Image as ImageIcon, CheckCircle, RefreshCw, Settings, FolderUp, Sparkles, Zap, Share2, Layers } from 'lucide-react';
-import { AppFile, ProcessingOptions, AiData } from './types';
+import { AppFile, ProcessingOptions } from './types';
 import { processImage, slugify, formatSize } from './services/imageService';
 import { generateGeminiDescription } from './services/geminiService';
 import { PreviewModal } from './components/PreviewModal';
@@ -154,84 +154,6 @@ export default function App() {
     }
   };
 
-  // Logic for Native Sharing (Mobile)
-  const handleShare = async (file: AppFile) => {
-    if (!file.processedUrl) return;
-    
-    // We strictly use 'webp' because that is the actual format of the file.
-    // Faking 'jpg' extension for a WebP file causes errors on Android.
-    const fileName = getFileName(file, 'webp'); 
-
-    try {
-        const blob = await fetch(file.processedUrl).then(r => r.blob());
-        const fileToShare = new File([blob], fileName, { type: 'image/webp' });
-        
-        if (navigator.share) {
-             await navigator.share({
-                files: [fileToShare],
-             });
-        } else {
-             throw new Error("Sharing not supported on this device.");
-        }
-    } catch (e: any) {
-        if (e.name === 'AbortError' || e.message?.toLowerCase().includes('cancel')) {
-            return;
-        }
-        console.error("Share failed", e);
-        if (tg && tg.showAlert) {
-            tg.showAlert(`Share Error: ${e.message}`);
-        } else {
-            alert(`Share Error: ${e.message}`);
-        }
-    }
-  };
-
-  // Logic for Bulk Download / Share
-  const handleDownloadAll = async () => {
-    const processedFiles = files.filter(f => f.status === 'done' && f.processedUrl);
-    if (processedFiles.length === 0) return;
-
-    setIsBulkSharing(true);
-
-    try {
-        // Strategy 1: Mobile Share (Share multiple files at once)
-        if (navigator.share) {
-            try {
-                const filesToShare = await Promise.all(processedFiles.map(async (f) => {
-                    const blob = await fetch(f.processedUrl!).then(r => r.blob());
-                    const name = getFileName(f, 'webp'); // Consistent WebP
-                    return new File([blob], name, { type: 'image/webp' });
-                }));
-
-                await navigator.share({ files: filesToShare });
-                setIsBulkSharing(false);
-                return; 
-            } catch (e: any) {
-                 if (e.name !== 'AbortError') {
-                    // If bulk share fails, we don't fallback silently, we alert.
-                    const msg = e.message || "Unknown error";
-                    if (tg && tg.showAlert) tg.showAlert(`Bulk Share Failed: ${msg}`);
-                    else alert(`Bulk Share Failed: ${msg}`);
-                 } 
-                 setIsBulkSharing(false);
-                 return;
-            }
-        }
-
-        // Strategy 2: Desktop Sequential Download
-        for (let i = 0; i < processedFiles.length; i++) {
-            setTimeout(() => {
-                downloadFileAnchor(processedFiles[i]);
-            }, i * 800);
-        }
-
-    } catch (e) {
-        console.error(e);
-    } finally {
-        setTimeout(() => setIsBulkSharing(false), 1000);
-    }
-  };
-
   // Helper for anchor download
   const downloadFileAnchor = (file: AppFile) => {
       if (!file.processedUrl) return;
@@ -245,11 +167,78 @@ export default function App() {
       document.body.removeChild(link);
   };
 
-  // Smart Handler
+  // Smart Share Handler with Fallback
+  const handleShare = async (file: AppFile) => {
+    if (!file.processedUrl) return;
+    
+    const fileName = getFileName(file, 'webp'); 
+
+    try {
+        const blob = await fetch(file.processedUrl).then(r => r.blob());
+        const fileToShare = new File([blob], fileName, { type: 'image/webp' });
+        
+        // Try native sharing if available
+        if (navigator.share) {
+             await navigator.share({
+                files: [fileToShare],
+             });
+        } else {
+             throw new Error("Sharing not supported");
+        }
+    } catch (e: any) {
+        if (e.name === 'AbortError' || e.message?.toLowerCase().includes('cancel')) {
+            return;
+        }
+        // Fallback silently to download if sharing fails
+        console.warn("Share failed, falling back to download:", e);
+        downloadFileAnchor(file);
+    }
+  };
+
+  // Bulk Handler
+  const handleDownloadAll = async () => {
+    const processedFiles = files.filter(f => f.status === 'done' && f.processedUrl);
+    if (processedFiles.length === 0) return;
+
+    setIsBulkSharing(true);
+
+    // Strategy 1: Mobile Share (Try to share all files)
+    if (navigator.share) {
+        try {
+            const filesToShare = await Promise.all(processedFiles.map(async (f) => {
+                const blob = await fetch(f.processedUrl!).then(r => r.blob());
+                const name = getFileName(f, 'webp'); 
+                return new File([blob], name, { type: 'image/webp' });
+            }));
+
+            await navigator.share({ files: filesToShare });
+            setIsBulkSharing(false);
+            return; 
+        } catch (e: any) {
+             if (e.name === 'AbortError') {
+                 setIsBulkSharing(false);
+                 return;
+             }
+             // If share fails, proceed to Strategy 2
+             console.warn("Bulk share failed, switching to sequential download");
+        }
+    }
+
+    // Strategy 2: Sequential Download (Desktop or Share Fallback)
+    for (let i = 0; i < processedFiles.length; i++) {
+        setTimeout(() => {
+            downloadFileAnchor(processedFiles[i]);
+        }, i * 500);
+    }
+
+    setTimeout(() => setIsBulkSharing(false), 1000);
+  };
+
+  // Smart Download Action Button Handler
   const handleDownloadAction = (file: AppFile) => {
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       
-      // On mobile, "Download" button just triggers Share, because real download is broken in WebView
+      // On mobile, prefer Share, but it will fallback to download if it fails
       if (isMobile) {
           handleShare(file);
       } else {
